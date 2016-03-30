@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -18,48 +17,34 @@ import (
 	"testing"
 	"time"
 
-	client "github.com/influxdata/influxdb/client/v2"
+	iclient "github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/toml"
-	"github.com/influxdata/kapacitor"
+	"github.com/influxdata/kapacitor/client/v1"
 	"github.com/influxdata/kapacitor/cmd/kapacitord/run"
 	"github.com/influxdata/kapacitor/services/udf"
 )
 
 func TestServer_Ping(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
-	r, err := s.HTTPGet(s.URL() + "/ping")
+	_, version, err := cli.Ping()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result")
-	}
-}
-
-func TestServer_Version(t *testing.T) {
-	s := OpenDefaultServer()
-	defer s.Close()
-	resp, err := http.Get(s.URL() + "/ping")
-	if err != nil {
-		t.Fatal(err)
-	}
-	version := resp.Header.Get("X-KAPACITOR-Version")
-
 	if version != "testServer" {
 		t.Fatal("unexpected version", version)
 	}
 }
 
 func TestServer_DefineTask(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 
 	name := "testTaskName"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{
+	dbrps := []client.DBRP{
 		{
 			Database:        "mydb",
 			RetentionPolicy: "myrp",
@@ -73,15 +58,12 @@ func TestServer_DefineTask(t *testing.T) {
     |from()
         .measurement('test')
 `
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	ti, err := s.GetTask(name)
+	ti, err := cli.Task(name, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +74,8 @@ func TestServer_DefineTask(t *testing.T) {
 	if ti.Name != name {
 		t.Fatalf("unexpected name got %s exp %s", ti.Name, name)
 	}
-	if ti.Type != kapacitor.StreamTask {
-		t.Fatalf("unexpected type got %s exp %s", ti.Type, kapacitor.StreamTask)
+	if ti.Type != "stream" {
+		t.Fatalf("unexpected type got %s exp %s", ti.Type, "stream")
 	}
 	if ti.Enabled != false {
 		t.Fatalf("unexpected enabled got %v exp %v", ti.Enabled, false)
@@ -111,12 +93,12 @@ func TestServer_DefineTask(t *testing.T) {
 }
 
 func TestServer_EnableTask(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 
 	name := "testTaskName"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{
+	dbrps := []client.DBRP{
 		{
 			Database:        "mydb",
 			RetentionPolicy: "myrp",
@@ -130,23 +112,17 @@ func TestServer_EnableTask(t *testing.T) {
     |from()
         .measurement('test')
 `
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	ti, err := s.GetTask(name)
+	ti, err := cli.Task(name, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,8 +133,8 @@ func TestServer_EnableTask(t *testing.T) {
 	if ti.Name != name {
 		t.Fatalf("unexpected name got %s exp %s", ti.Name, name)
 	}
-	if ti.Type != kapacitor.StreamTask {
-		t.Fatalf("unexpected type got %s exp %s", ti.Type, kapacitor.StreamTask)
+	if ti.Type != "stream" {
+		t.Fatalf("unexpected type got %s exp %s", ti.Type, "stream")
 	}
 	if ti.Enabled != true {
 		t.Fatalf("unexpected enabled got %v exp %v", ti.Enabled, true)
@@ -183,12 +159,12 @@ stream1 [avg_exec_time_ns="0" ];
 }
 
 func TestServer_DisableTask(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 
 	name := "testTaskName"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{
+	dbrps := []client.DBRP{
 		{
 			Database:        "mydb",
 			RetentionPolicy: "myrp",
@@ -202,31 +178,22 @@ func TestServer_DisableTask(t *testing.T) {
     |from()
         .measurement('test')
 `
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	r, err = s.DisableTask(name)
+	err = cli.Disable(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	ti, err := s.GetTask(name)
+	ti, err := cli.Task(name, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +204,8 @@ func TestServer_DisableTask(t *testing.T) {
 	if ti.Name != name {
 		t.Fatalf("unexpected name got %s exp %s", ti.Name, name)
 	}
-	if ti.Type != kapacitor.StreamTask {
-		t.Fatalf("unexpected type got %s exp %s", ti.Type, kapacitor.StreamTask)
+	if ti.Type != "stream" {
+		t.Fatalf("unexpected type got %s exp %s", ti.Type, "stream")
 	}
 	if ti.Enabled != false {
 		t.Fatalf("unexpected enabled got %v exp %v", ti.Enabled, false)
@@ -256,12 +223,12 @@ func TestServer_DisableTask(t *testing.T) {
 }
 
 func TestServer_DeleteTask(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 
 	name := "testTaskName"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{
+	dbrps := []client.DBRP{
 		{
 			Database:        "mydb",
 			RetentionPolicy: "myrp",
@@ -275,27 +242,24 @@ func TestServer_DeleteTask(t *testing.T) {
     |from()
         .measurement('test')
 `
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
-
-	err = s.DeleteTask(name)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ti, err := s.GetTask(name)
+	err = cli.DeleteTask(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ti, err := cli.Task(name, false)
 	if err == nil {
 		t.Fatal("unexpected task:", ti)
 	}
 }
 
 func TestServer_ListTasks(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 	count := 10
 
@@ -304,7 +268,7 @@ func TestServer_ListTasks(t *testing.T) {
     |from()
         .measurement('test')
 `
-	dbrps := []kapacitor.DBRP{
+	dbrps := []client.DBRP{
 		{
 			Database:        "mydb",
 			RetentionPolicy: "myrp",
@@ -316,25 +280,19 @@ func TestServer_ListTasks(t *testing.T) {
 	}
 	for i := 0; i < count; i++ {
 		name := fmt.Sprintf("testTaskName%d", i)
-		r, err := s.DefineTask(name, ttype, tick, dbrps)
+		err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r != "" {
-			t.Fatal("unexpected result", r)
-		}
 
 		if i%2 == 0 {
-			r, err = s.EnableTask(name)
+			err = cli.Enable(name)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r != "" {
-				t.Fatal("unexpected result", r)
-			}
 		}
 	}
-	tasks, err := s.ListTasks()
+	tasks, err := cli.ListTasks(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +303,7 @@ func TestServer_ListTasks(t *testing.T) {
 		if exp, got := fmt.Sprintf("testTaskName%d", i), task.Name; exp != got {
 			t.Errorf("unexpected task.Name i:%d exp:%s got:%s", i, exp, got)
 		}
-		if exp, got := kapacitor.StreamTask, task.Type; exp != got {
+		if exp, got := "stream", task.Type; exp != got {
 			t.Errorf("unexpected task.Type i:%d exp:%v got:%v", i, exp, got)
 		}
 		if !reflect.DeepEqual(task.DBRPs, dbrps) {
@@ -362,12 +320,12 @@ func TestServer_ListTasks(t *testing.T) {
 }
 
 func TestServer_StreamTask(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 
 	name := "testStreamTask"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -381,20 +339,14 @@ func TestServer_StreamTask(t *testing.T) {
     |httpOut('count')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
 	endpoint := fmt.Sprintf("%s/task/%s/count", s.URL(), name)
@@ -439,11 +391,11 @@ func TestServer_BatchTask(t *testing.T) {
 	c := NewConfig()
 	c.InfluxDB[0].Enabled = true
 	count := 0
-	db := NewInfluxDB(func(q string) *client.Response {
+	db := NewInfluxDB(func(q string) *iclient.Response {
 		if len(q) > 6 && q[:6] == "SELECT" {
 			count++
-			return &client.Response{
-				Results: []client.Result{{
+			return &iclient.Response{
+				Results: []iclient.Result{{
 					Series: []models.Row{{
 						Name:    "cpu",
 						Columns: []string{"time", "value"},
@@ -466,10 +418,11 @@ func TestServer_BatchTask(t *testing.T) {
 	c.InfluxDB[0].URLs = []string{db.URL()}
 	s := OpenServer(c)
 	defer s.Close()
+	cli := Client(s)
 
 	name := "testBatchTask"
 	ttype := "batch"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -481,20 +434,14 @@ func TestServer_BatchTask(t *testing.T) {
     |httpOut('count')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
 	endpoint := fmt.Sprintf("%s/task/%s/count", s.URL(), name)
@@ -504,12 +451,9 @@ func TestServer_BatchTask(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	r, err = s.DisableTask(name)
+	err = cli.Disable(name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
 	if count == 0 {
@@ -520,16 +464,17 @@ func TestServer_BatchTask(t *testing.T) {
 func TestServer_InvalidBatchTask(t *testing.T) {
 	c := NewConfig()
 	c.InfluxDB[0].Enabled = true
-	db := NewInfluxDB(func(q string) *client.Response {
+	db := NewInfluxDB(func(q string) *iclient.Response {
 		return nil
 	})
 	c.InfluxDB[0].URLs = []string{db.URL()}
 	s := OpenServer(c)
 	defer s.Close()
+	cli := Client(s)
 
 	name := "testInvalidBatchTask"
 	ttype := "batch"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -541,33 +486,30 @@ func TestServer_InvalidBatchTask(t *testing.T) {
     |httpOut('count')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err := cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	expErr := `batch query is not allowed to request data from "unknowndb"."unknownrp"`
 	if err != nil && err.Error() != expErr {
 		t.Fatalf("unexpected err: got %v exp %s", err, expErr)
 	}
 
-	err = s.DeleteTask(name)
+	err = cli.DeleteTask(name)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestServer_RecordReplayStream(t *testing.T) {
-	s := OpenDefaultServer()
+	s, cli := OpenDefaultServer()
 	defer s.Close()
 
 	name := "testStreamTask"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -591,14 +533,10 @@ func TestServer_RecordReplayStream(t *testing.T) {
         .log('` + tmpDir + `/alert.log')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err = cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
-
 	points := `test value=1 0000000000
 test value=1 0000000001
 test value=1 0000000001
@@ -621,7 +559,9 @@ test value=1 0000000012
 	rid := make(chan string, 1)
 	started := make(chan struct{})
 	go func() {
-		id, err := s.DoStreamRecording(name, 10*time.Second, started)
+		id, err := cli.RecordStream(name, 10*time.Second)
+		close(started)
+		_, err = cli.Recording(id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -633,7 +573,7 @@ test value=1 0000000012
 	s.MustWrite("mydb", "myrp", points, v)
 	id := <-rid
 
-	_, err = s.DoReplay(name, id)
+	err = cli.Replay(name, id, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,10 +622,10 @@ func TestServer_RecordReplayBatch(t *testing.T) {
 	c := NewConfig()
 	c.InfluxDB[0].Enabled = true
 	value := 0
-	db := NewInfluxDB(func(q string) *client.Response {
+	db := NewInfluxDB(func(q string) *iclient.Response {
 		if len(q) > 6 && q[:6] == "SELECT" {
-			r := &client.Response{
-				Results: []client.Result{{
+			r := &iclient.Response{
+				Results: []iclient.Result{{
 					Series: []models.Row{{
 						Name:    "cpu",
 						Columns: []string{"time", "value"},
@@ -710,10 +650,11 @@ func TestServer_RecordReplayBatch(t *testing.T) {
 	c.InfluxDB[0].URLs = []string{db.URL()}
 	s := OpenServer(c)
 	defer s.Close()
+	cli := Client(s)
 
 	name := "testBatchTask"
 	ttype := "batch"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -734,20 +675,22 @@ func TestServer_RecordReplayBatch(t *testing.T) {
         .log('` + tmpDir + `/alert.log')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
-	}
-
-	id, err := s.DoBatchRecording(name, time.Second*8)
+	err = cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = s.DoReplay(name, id)
+	id, err := cli.RecordBatch(name, "", time.Time{}, time.Time{}, time.Second*8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wait for recording to finish.
+	_, err = cli.Recording(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = cli.Replay(name, id, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -907,10 +850,11 @@ func testStreamAgent(t *testing.T, c *run.Config) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	cli := Client(s)
 
 	name := "testUDFTask"
 	ttype := "stream"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -929,20 +873,14 @@ func testStreamAgent(t *testing.T, c *run.Config) {
     |httpOut('moving_avg')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err = cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
 	endpoint := fmt.Sprintf("%s/task/%s/moving_avg", s.URL(), name)
@@ -1064,7 +1002,7 @@ func TestServer_UDFBatchAgents(t *testing.T) {
 
 func testBatchAgent(t *testing.T, c *run.Config) {
 	count := 0
-	db := NewInfluxDB(func(q string) *client.Response {
+	db := NewInfluxDB(func(q string) *iclient.Response {
 		if len(q) > 6 && q[:6] == "SELECT" {
 			count++
 			data := []float64{
@@ -1106,8 +1044,8 @@ func testBatchAgent(t *testing.T, c *run.Config) {
 				}
 			}
 
-			return &client.Response{
-				Results: []client.Result{{
+			return &iclient.Response{
+				Results: []iclient.Result{{
 					Series: []models.Row{{
 						Name:    "cpu",
 						Columns: []string{"time", "value"},
@@ -1129,10 +1067,11 @@ func testBatchAgent(t *testing.T, c *run.Config) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	cli := Client(s)
 
 	name := "testUDFTask"
 	ttype := "batch"
-	dbrps := []kapacitor.DBRP{{
+	dbrps := []client.DBRP{{
 		Database:        "mydb",
 		RetentionPolicy: "myrp",
 	}}
@@ -1148,20 +1087,14 @@ func testBatchAgent(t *testing.T, c *run.Config) {
     |httpOut('count')
 `
 
-	r, err := s.DefineTask(name, ttype, tick, dbrps)
+	err = cli.Define(name, ttype, dbrps, strings.NewReader(tick), false)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
-	r, err = s.EnableTask(name)
+	err = cli.Enable(name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
 	endpoint := fmt.Sprintf("%s/task/%s/count", s.URL(), name)
@@ -1170,12 +1103,9 @@ func testBatchAgent(t *testing.T, c *run.Config) {
 	if err != nil {
 		t.Error(err)
 	}
-	r, err = s.DisableTask(name)
+	err = cli.Disable(name)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if r != "" {
-		t.Fatal("unexpected result", r)
 	}
 
 	if count == 0 {

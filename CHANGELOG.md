@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.13.0 [unreleased]
+
+### Release Notes
+
+
+### Features
+
+- [#386](https://github.com/influxdata/kapacitor/issues/386): Adds official Go HTTP client package.
+
+
+### Bugfixes
+
+
 ## v0.12.0 [unreleased]
 
 ### Release Notes
